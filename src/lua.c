@@ -6,7 +6,6 @@
 #include <unistd.h>
 
 #include "lua.h"
-#include "crc32.h"
 #include "hook.h"
 #include "util.h"
 
@@ -125,14 +124,12 @@ static int cb_send(lua_State *L)
 {
 	size_t n = 0;
 	const char *f = L_tobin(L, 1, &n);
-	uint32_t crc;
 
 	if (!f || n == 0 || n > OMCI_FRAME_MAX) {
 		L_pushboolean(L, 0);
 		return 1;
 	}
-	crc = crc32itu((const uint8_t *)f, (uint16_t)n);
-	L_pushboolean(L, hook_send((const uint8_t *)f, (uint16_t)n, crc) == 0);
+	L_pushboolean(L, hook_send((const uint8_t *)f, (uint16_t)n) == 0);
 	return 1;
 }
 
@@ -259,8 +256,7 @@ void lua_attach(void)
 #define MT_RESET 0xF  /* MIB Reset */
 
 enum msg_result lua_call_on_rx(const uint8_t *msg, uint16_t len,
-				uint8_t *omcid_out, uint16_t *omcid_len,
-				uint32_t *omcid_crc)
+				uint8_t *out_msg, uint16_t *out_len)
 {
 	enum msg_result res = MSG_PASS;
 
@@ -300,9 +296,8 @@ enum msg_result lua_call_on_rx(const uint8_t *msg, uint16_t len,
 			if (f && n == len && memcmp(f, msg, len) == 0) {
 				res = MSG_PASS;
 			} else if (f && n > 0 && n <= OMCI_FRAME_MAX) {
-				memcpy(omcid_out, f, n);
-				*omcid_len = (uint16_t)n;
-				*omcid_crc = crc32itu(omcid_out, (uint16_t)n);
+				memcpy(out_msg, f, n);
+				*out_len = (uint16_t)n;
 				res = MSG_EDIT;
 			}
 			break;
@@ -356,8 +351,7 @@ void lua_call_on_reboot(void)
 }
 
 enum msg_result lua_call_on_tx(const uint8_t *msg, uint16_t len,
-				uint8_t *omcid_out, uint16_t *omcid_len,
-				uint32_t *omcid_crc)
+				uint8_t *out_msg, uint16_t *out_len)
 {
 	enum msg_result res = MSG_PASS;
 
@@ -391,9 +385,8 @@ enum msg_result lua_call_on_tx(const uint8_t *msg, uint16_t len,
 			if (f && n == len && memcmp(f, msg, len) == 0) {
 				res = MSG_PASS;
 			} else if (f && n > 0 && n <= OMCI_FRAME_MAX) {
-				memcpy(omcid_out, f, n);
-				*omcid_len = (uint16_t)n;
-				*omcid_crc = crc32itu(omcid_out, (uint16_t)n);
+				memcpy(out_msg, f, n);
+				*out_len = (uint16_t)n;
 				res = MSG_EDIT;
 			}
 			break;

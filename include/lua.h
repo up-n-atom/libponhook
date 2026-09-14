@@ -13,12 +13,10 @@ enum msg_result {
 };
 
 enum msg_result lua_call_on_rx(const uint8_t *msg, uint16_t len,
-				uint8_t *omcid_out, uint16_t *omcid_len,
-				uint32_t *omcid_crc);
+				uint8_t *out_msg, uint16_t *out_len);
 
 enum msg_result lua_call_on_tx(const uint8_t *msg, uint16_t len,
-				uint8_t *omcid_out, uint16_t *omcid_len,
-				uint32_t *omcid_crc);
+				uint8_t *out_msg, uint16_t *out_len);
 
 void lua_call_on_reset(void);
 

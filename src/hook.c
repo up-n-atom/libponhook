@@ -10,6 +10,7 @@
 #include "lua.h"
 #include "hook.h"
 #include "util.h"
+#include "crc32.h"
 
 static const struct pa_ops *ponnet_ops;
 static void *ponnet_ll_handle;
@@ -22,11 +23,14 @@ static enum pon_adapter_errno (*omcid_rx_cb)(void *hl, const uint8_t *msg,
 					    const uint32_t *crc);
 static void *omcid_hl_handle;
 
-int hook_send(const uint8_t *msg, uint16_t len, uint32_t crc)
+int hook_send(const uint8_t *msg, uint16_t len)
 {
+	uint32_t crc;
+
 	if (!ponnet_ops || !ponnet_ops->msg_ops || !ponnet_ops->msg_ops->msg_send) {
 		return -1;
 	}
+	crc = crc32itu(msg, len);
 	return ponnet_ops->msg_ops->msg_send(ponnet_ll_handle, msg, len, &crc) ==
 	       PON_ADAPTER_SUCCESS ? 0 : -1;
 }
@@ -132,11 +136,12 @@ static enum pon_adapter_errno hook_rx(void *hl __attribute__((unused)),
 	uint32_t new_crc = 0;
 	enum msg_result res;
 
-	res = lua_call_on_rx(msg, len, new_msg, &new_len, &new_crc);
+	res = lua_call_on_rx(msg, len, new_msg, &new_len);
 	switch (res) {
 	case MSG_DROP:
 		return PON_ADAPTER_SUCCESS;
 	case MSG_EDIT:
+		new_crc = crc32itu(new_msg, new_len);
 		return omcid_rx_cb ?
 			omcid_rx_cb(omcid_hl_handle, new_msg, new_len, &new_crc) :
 			PON_ADAPTER_SUCCESS;
@@ -172,11 +177,12 @@ static enum pon_adapter_errno hook_msg_send(void *ll, const uint8_t *msg,
 		return PON_ADAPTER_ERR_NOT_FOUND;
 	}
 
-	res = lua_call_on_tx(msg, len, new_msg, &new_len, &new_crc);
+	res = lua_call_on_tx(msg, len, new_msg, &new_len);
 	switch (res) {
 	case MSG_DROP:
 		return PON_ADAPTER_SUCCESS;
 	case MSG_EDIT:
+		new_crc = crc32itu(new_msg, new_len);
 		return ponnet_ops->msg_ops->msg_send(ll, new_msg, new_len, &new_crc);
 	case MSG_PASS:
 	default:
