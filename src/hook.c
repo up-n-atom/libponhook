@@ -18,10 +18,10 @@ static void *ponnet_handle;
 
 static const struct pa_ll_dbg_lvl_ops *hook_dbg_ops;
 
-static enum pon_adapter_errno (*omcid_rx_cb)(void *hl, const uint8_t *msg,
+static enum pon_adapter_errno (*ponnet_rx_cb)(void *hl, const uint8_t *msg,
 					    const uint16_t len,
 					    const uint32_t *crc);
-static void *omcid_hl_handle;
+static void *ponnet_hl_handle;
 
 int hook_send(const uint8_t *msg, uint16_t len)
 {
@@ -73,15 +73,15 @@ void hook_log_err(const char *fmt, ...)
 }
 
 static struct pa_eh_ops hook_eh_ops;
-static void (*orig_ik_update)(void *caller, const struct pa_omci_ik *ik);
+static void (*ponnet_ik_update)(void *caller, const struct pa_omci_ik *ik);
 
 static void hook_ik_update(void *caller, const struct pa_omci_ik *ik)
 {
 	if (ik) {
 		LOGW("OMCI-IK: secure mode live\n");
 	}
-	if (orig_ik_update) {
-		orig_ik_update(caller, ik);
+	if (ponnet_ik_update) {
+		ponnet_ik_update(caller, ik);
 	}
 }
 
@@ -95,7 +95,7 @@ static enum pon_adapter_errno hook_sys_init(char const *const *init_data,
 	}
 
 	if (eh) {
-		orig_ik_update = eh->omci_ik_update;
+		ponnet_ik_update = eh->omci_ik_update;
 		hook_eh_ops = *eh;
 		hook_eh_ops.omci_ik_update = hook_ik_update;
 		eh = &hook_eh_ops;
@@ -142,12 +142,12 @@ static enum pon_adapter_errno hook_rx(void *hl __attribute__((unused)),
 		return PON_ADAPTER_SUCCESS;
 	case MSG_EDIT:
 		new_crc = crc32itu(new_msg, new_len);
-		return omcid_rx_cb ?
-			omcid_rx_cb(omcid_hl_handle, new_msg, new_len, &new_crc) :
+		return ponnet_rx_cb ?
+			ponnet_rx_cb(ponnet_hl_handle, new_msg, new_len, &new_crc) :
 			PON_ADAPTER_SUCCESS;
 	case MSG_PASS:
 	default:
-		return omcid_rx_cb ? omcid_rx_cb(omcid_hl_handle, msg, len, crc) : PON_ADAPTER_SUCCESS;
+		return ponnet_rx_cb ? ponnet_rx_cb(ponnet_hl_handle, msg, len, crc) : PON_ADAPTER_SUCCESS;
 	}
 }
 
@@ -156,8 +156,8 @@ static enum pon_adapter_errno hook_msg_rx_cb_register(void *ll,
 				     const uint16_t, const uint32_t *),
 	void *hl_handle)
 {
-	omcid_rx_cb = cb;
-	omcid_hl_handle = hl_handle;
+	ponnet_rx_cb = cb;
+	ponnet_hl_handle = hl_handle;
 	if (!ponnet_ops || !ponnet_ops->msg_ops || !ponnet_ops->msg_ops->msg_rx_cb_register) {
 		return PON_ADAPTER_ERR_NOT_FOUND;
 	}
