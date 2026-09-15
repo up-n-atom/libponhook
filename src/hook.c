@@ -133,7 +133,7 @@ static enum pon_adapter_errno hook_rx(void *hl __attribute__((unused)),
 {
 	uint8_t new_msg[OMCI_FRAME_MAX];
 	uint16_t new_len = 0;
-	uint32_t new_crc = 0;
+	uint32_t new_crc;
 	enum msg_result res;
 
 	res = lua_call_on_rx(msg, len, new_msg, &new_len);
@@ -170,7 +170,7 @@ static enum pon_adapter_errno hook_msg_send(void *ll, const uint8_t *msg,
 {
 	uint8_t new_msg[OMCI_FRAME_MAX];
 	uint16_t new_len = 0;
-	uint32_t new_crc = 0;
+	uint32_t new_crc;
 	enum msg_result res;
 
 	if (!ponnet_ops || !ponnet_ops->msg_ops || !ponnet_ops->msg_ops->msg_send) {
