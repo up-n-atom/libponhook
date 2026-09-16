@@ -30,7 +30,7 @@ function M.inst(f)  return M.u16(f, 7) end
 function M.elen(f)  return M.u16(f, 9) end
 
 local function body_base(f)
-	return M.fmt(f) == M.EXTENDED and 11 or 9
+	return M.fmt(f) == M.EXTENDED and 11 or 9 -- baseline=9, extended=11 (skips 2-byte length field)
 end
 
 -- body(frame) -> binary string, length
@@ -47,7 +47,7 @@ function M.body(f)
 	return sub(f, base, base - 1 + l), l
 end
 
-function M.result(f) return byte(f, 11) end  -- ack/response frames
+function M.result(f) return byte(f, 11) end
 
 -- message-type mnemonics
 M.MT = {
@@ -59,9 +59,11 @@ M.MT = {
 	ACTIVATE_SW = 22, COMMIT_SW = 23, SYNC_TIME = 24, REBOOT = 25,
 	GET_NEXT = 26, TEST_RESULT = 27, GET_CURRENT_DATA = 28, SET_TABLE = 29,
 }
-M.MR = { OK = 0, ERROR = 1, NOT_SUPPORTED = 2, PARAM = 3,
-	 UNKNOWN_ME = 4, UNKNOWN_ME_INST = 5, BUSY = 6,
-	 EXISTS = 7, ATTR_FAILED = 9 }
+M.MR = {
+	OK = 0, ERROR = 1, NOT_SUPPORTED = 2, PARAM = 3,
+	UNKNOWN_ME = 4, UNKNOWN_ME_INST = 5, BUSY = 6,
+	EXISTS = 7, ATTR_FAILED = 9
+}
 
 -- reverse of M.MT (number -> name) for summary() below
 local MT_NAME = {}
@@ -89,7 +91,7 @@ function M.new(o)
 	if f == M.EXTENDED then
 		return h .. M.put16(#body) .. body
 	end
-	return h .. body .. rep("\0", 32 - #body) .. "\0\0\0\40"
+	return h .. body .. rep("\0", 32 - #body) .. "\0\0\0\40"  -- 40=0x28
 end
 
 -- reply to req: same tci/class/inst/mt, ak=req.ar, ar=0
@@ -116,7 +118,15 @@ function M.with(f, field, v)
 	if field == "mt" then
 		return M.with(f, "type", byte(f, 3) - byte(f, 3) % 32 + v)
 	end
-	error("omci_frame.with: unknown field " .. tostring(field))
+	error("unknown field " .. tostring(field))
+end
+
+function M.mask(attrs)
+	local m = 0
+	for _, a in ipairs(attrs) do
+		m = m + 2^(16 - a)
+	end
+	return m
 end
 
 local function attr_segs(f, sizes, mask, voff)
@@ -130,12 +140,13 @@ local function attr_segs(f, sizes, mask, voff)
 	return out
 end
 
--- ET/GET mask parser: lead=0 for SET, lead=1 for GET
-local function mask_parse(f, sizes, lead)
+-- SET/GET mask parser
 	local base = body_base(f)
 	local moff = base + lead
 	local mask = M.u16(f, moff)
-	return mask, attr_segs(f, sizes, mask, moff + 2), M.fmt(f) == M.EXTENDED, moff, base
+	local ext = M.fmt(f) == M.EXTENDED
+	local voff = moff + 2 + ((gap_ext and ext) and 4 or 0)
+	return mask, attr_segs(f, sizes, mask, voff), ext, moff, base, voff
 end
 
 local function set_parse(f, sizes) return mask_parse(f, sizes, 0) end
@@ -143,7 +154,7 @@ local function get_parse(f, sizes) return mask_parse(f, sizes, 1) end
 
 -- clear attribute's mask bit + drop its bytes
 local function strip_attr(f, sizes, attr, parse)
-	local mask, segs, ext, moff, base = parse(f, sizes)
+	local mask, segs, ext, moff, base, voff = parse(f, sizes)
 	local vals, gone = "", false
 	for i = 1, #segs do
 		if segs[i].attr == attr then
@@ -162,12 +173,17 @@ local function strip_attr(f, sizes, attr, parse)
 		return sub(f, 1, 8) .. M.put16(#lead_bytes + 2 + #vals)
 			.. lead_bytes .. M.put16(newmask) .. vals
 	end
-	-- baseline: fixed 32-byte content = lead_bytes + mask(2) + values + CPCS tail
-	local budget = 30 - #lead_bytes
+	local gap_bytes = sub(f, moff + 2, voff - 1)
+	if ext then
+		return sub(f, 1, 8) .. M.put16(#lead_bytes + 2 + #gap_bytes + #vals)
+			.. lead_bytes .. M.put16(newmask) .. gap_bytes .. vals
+	end
+	-- baseline: fixed 32-byte content = lead_bytes + mask(2) + gap_bytes + values + CPCS tail
+	local budget = 30 - #lead_bytes - #gap_bytes
 	if #vals > budget then
 		return f
 	end
-	return sub(f, 1, 8) .. lead_bytes .. M.put16(newmask) .. vals
+	return sub(f, 1, 8) .. lead_bytes .. M.put16(newmask) .. gap_bytes .. vals
 		.. rep("\0", budget - #vals) .. sub(f, 41)
 end
 
@@ -175,7 +191,7 @@ function M.strip_set_attr(f, sizes, attr) return strip_attr(f, sizes, attr, set_
 function M.strip_get_attr(f, sizes, attr) return strip_attr(f, sizes, attr, get_parse) end
 
 -- overwrite attribute's value in place
-local function replace_attr(f, sizes, attr, value, parse)
+local function replace_attr_impl(f, sizes, attr, value, parse)
 	local _, segs = parse(f, sizes)
 	value = tostring(value or "")
 	if #value > sizes[attr] then
@@ -192,8 +208,8 @@ local function replace_attr(f, sizes, attr, value, parse)
 	return f
 end
 
-function M.replace_set_attr(f, sizes, attr, value) return replace_attr(f, sizes, attr, value, set_parse) end
-function M.replace_get_attr(f, sizes, attr, value) return replace_attr(f, sizes, attr, value, get_parse) end
+function M.replace_set_attr(f, sizes, attr, value) return replace_attr_impl(f, sizes, attr, value, set_parse) end
+function M.replace_get_attr(f, sizes, attr, value) return replace_attr_impl(f, sizes, attr, value, get_parse) end
 
 -- overwrite attribute's value in place
 function M.replace_create_attr(f, sizes, sbc, attr, value)
@@ -207,6 +223,96 @@ function M.replace_create_attr(f, sizes, sbc, attr, value)
 		end
 	end
 	return f
+end
+
+M.CLASS = {
+	[256] = {
+		name = "ONU-G",
+		attrs = {
+			{ name = "vendor_id",                size = 4,  sbc = false, ro = true  }, -- 1
+			{ name = "version",                  size = 14, sbc = false, ro = true  }, -- 2
+			{ name = "serial_number",            size = 8,  sbc = false, ro = true  }, -- 3
+			{ name = "traffic_management_option", size = 1, sbc = false, ro = true  }, -- 4
+			{ name = "deprecated",               size = 1,  sbc = false, ro = true  }, -- 5
+			{ name = "battery_backup",           size = 1,  sbc = false, ro = false }, -- 6
+			{ name = "admin_state",              size = 1,  sbc = false, ro = false }, -- 7
+			{ name = "operational_state",        size = 1,  sbc = false, ro = true  }, -- 8
+			{ name = "onu_survival_time",        size = 1,  sbc = false, ro = true  }, -- 9
+			{ name = "logical_onu_id",           size = 24, sbc = false, ro = true  }, -- 10
+			{ name = "logical_password",         size = 12, sbc = false, ro = true  }, -- 11
+			{ name = "credentials_status",       size = 1,  sbc = false, ro = false }, -- 12
+			{ name = "extended_tc_layer_options", size = 2, sbc = false, ro = true  }, -- 13
+		},
+	},
+}
+
+local sizes_cache, sbc_cache = {}, {}
+
+local function class_or_error(class)
+	local c = M.CLASS[class]
+	if not c then
+		error("class " .. tostring(class) .. " not registered")
+	end
+	return c
+end
+
+local function class_sizes(class)
+	local cached = sizes_cache[class]
+	if cached then return cached end
+	local c = class_or_error(class)
+	local sizes = {}
+	for i, a in ipairs(c.attrs) do sizes[i] = a.size end
+	sizes_cache[class] = sizes
+	return sizes
+end
+
+local function class_sbc_mask(class)
+	local cached = sbc_cache[class]
+	if cached then return cached end
+	local c = class_or_error(class)
+	local mask = 0
+	for i, a in ipairs(c.attrs) do
+		if a.sbc then mask = mask + 2^(16 - i) end
+	end
+	sbc_cache[class] = mask
+	return mask
+end
+
+function M.attr_number(class, name)
+	local c = M.CLASS[class]
+	if not c then return nil end
+	for i, a in ipairs(c.attrs) do
+		if a.name == name then return i end
+	end
+	return nil
+end
+
+function M.strip_attr(f, class, attr)
+	local mt = M.mt(f)
+	if mt == M.MT.SET then
+		return M.strip_set_attr(f, class_sizes(class), attr)
+	elseif mt == M.MT.GET then
+		return M.strip_get_attr(f, class_sizes(class), attr)
+	end
+	error("strip_attr: frame mt=" .. mt .. " is not SET or GET")
+end
+
+function M.replace_attr(f, class, attr, value)
+	local c = class_or_error(class)
+	local mt = M.mt(f)
+	if mt == M.MT.SET then
+		local a = c.attrs[attr]
+		if a and a.ro then
+			error("class " .. c.name .. " attribute " .. attr ..
+				" (" .. a.name .. ") is read-only, cannot SET")
+		end
+		return M.replace_set_attr(f, class_sizes(class), attr, value)
+	elseif mt == M.MT.GET then
+		return M.replace_get_attr(f, class_sizes(class), attr, value)
+	elseif mt == M.MT.CREATE then
+		return M.replace_create_attr(f, class_sizes(class), class_sbc_mask(class), attr, value)
+	end
+	error("replace_attr: frame mt=" .. mt .. " is not SET, GET, or CREATE")
 end
 
 local ok_nixio, nixio = pcall(require, "nixio")
