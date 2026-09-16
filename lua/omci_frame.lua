@@ -4,12 +4,13 @@ local floor = math.floor
 local fmt = string.format
 
 local M = {}
-M.BASE, M.EXT = 0x0a, 0x0b
+M.BASELINE, M.EXTENDED = 0x0a, 0x0b
 
 function M.u16(f, i)
 	local x, y = byte(f, i, i + 1)
 	return x * 256 + y
 end
+
 function M.put16(v)
 	return char(floor(v / 256) % 256, v % 256)
 end
@@ -29,13 +30,13 @@ function M.inst(f)  return M.u16(f, 7) end
 function M.elen(f)  return M.u16(f, 9) end
 
 local function body_base(f)
-	return M.fmt(f) == M.EXT and 11 or 9
+	return M.fmt(f) == M.EXTENDED and 11 or 9
 end
 
 -- body(frame) -> binary string, length
 function M.body(f)
 	local base = body_base(f)
-	if M.fmt(f) == M.EXT then
+	if M.fmt(f) == M.EXTENDED then
 		local l = M.elen(f)
 		if base - 1 + l > #f then l = #f - (base - 1) end
 		if l < 0 then l = 0 end
@@ -70,7 +71,7 @@ for name, num in pairs(M.MT) do MT_NAME[num] = name end
 function M.summary(f)
 	local mt = M.mt(f)
 	return fmt("%s tci=%04X %s(%d) ar=%d ak=%d class=%04X inst=%04X body=%dB",
-		M.fmt(f) == M.EXT and "EXT" or "BASE",
+		M.fmt(f) == M.EXTENDED and "EXT" or "BASE",
 		M.tci(f), MT_NAME[mt] or "?", mt,
 		M.ar(f), M.ak(f),
 		M.class(f), M.inst(f),
@@ -79,13 +80,13 @@ end
 
 -- generic frame: M.new{tci=,mt=,ak=,ar=,class=,inst=,body=,fmt=}
 function M.new(o)
-	local f = o.fmt or M.EXT
+	local f = o.fmt or M.EXTENDED
 	local h = M.put16(o.tci or 0)
 		.. char((o.mt or 0) + (o.ak or 0) * 32 + (o.ar or 0) * 64)
 		.. char(f)
 		.. M.put16(o.class or 0) .. M.put16(o.inst or 0)
 	local body = o.body or ""
-	if f == M.EXT then
+	if f == M.EXTENDED then
 		return h .. M.put16(#body) .. body
 	end
 	return h .. body .. rep("\0", 32 - #body) .. "\0\0\0\40"
@@ -134,7 +135,7 @@ local function mask_parse(f, sizes, lead)
 	local base = body_base(f)
 	local moff = base + lead
 	local mask = M.u16(f, moff)
-	return mask, attr_segs(f, sizes, mask, moff + 2), M.fmt(f) == M.EXT, moff, base
+	return mask, attr_segs(f, sizes, mask, moff + 2), M.fmt(f) == M.EXTENDED, moff, base
 end
 
 local function set_parse(f, sizes) return mask_parse(f, sizes, 0) end
