@@ -141,6 +141,7 @@ local function attr_segs(f, sizes, mask, voff)
 end
 
 -- SET/GET mask parser
+local function mask_parse(f, sizes, lead, gap_ext)
 	local base = body_base(f)
 	local moff = base + lead
 	local mask = M.u16(f, moff)
